@@ -28,6 +28,7 @@ sol_storage! {
         #[borrow]
         Erc721 erc721;
 
+        address owner;
         uint256 mint_price;
         uint256 total_supply;
         mapping(uint256 => bytes32) seeds;
@@ -85,8 +86,17 @@ impl Squiggle {
 #[public]
 #[inherit(Erc721)]
 impl Squiggle {
-    #[constructor]
-    fn constructor(&mut self, mint_price: U256) -> Result<(), SquiggleError> {
+    // Initialize function instead of constructor for now
+    // Due to cargo stylus deployment issue with constructor args
+    pub fn initialize(&mut self, mint_price: U256) -> Result<(), SquiggleError> {
+        // Check if already initialized
+        if !self.owner.get().is_zero() {
+            return Err(SquiggleError::InvalidSender(erc721::ERC721InvalidSender {
+                sender: self.vm().msg_sender(),
+            }));
+        }
+        
+        self.owner.set(self.vm().msg_sender());
         self.mint_price.set(mint_price);
         Ok(())
     }
@@ -146,7 +156,7 @@ mod test {
       let vm = TestVM::default();
       let mut contract = Squiggle::from(&vm);
 
-      let result = contract.constructor(U256::from(100));
+      let result = contract.initialize(U256::from(100));
       assert!(result.is_ok());
 
       let mint_price = contract.mint_price.get();
