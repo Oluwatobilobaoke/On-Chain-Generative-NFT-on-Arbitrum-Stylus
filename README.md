@@ -30,6 +30,16 @@ squiggle/
 │   ├── generator.rs   # SVG generation logic
 │   ├── base64.rs      # Base64 encoding utilities
 │   └── main.rs        # Export ABI entry point
+├── integration/       # TypeScript integration scripts
+│   ├── package.json   # Bun package configuration
+│   ├── tsconfig.json  # TypeScript configuration
+│   ├── chain.ts       # Chain and wallet setup
+│   ├── abis.ts        # Contract ABI definitions
+│   ├── squiggle.ts    # Contract interaction helpers
+│   ├── initialize.ts  # Contract initialization script
+│   ├── mint.ts        # NFT minting script
+│   ├── index.test.ts  # Test examples
+│   └── node_modules/  # Dependencies
 ├── test_output/       # Generated SVG samples
 ├── Cargo.toml         # Project dependencies
 ├── rust-toolchain.toml # Rust version specification
@@ -94,45 +104,95 @@ cargo stylus check
 cargo stylus export-abi
 ```
 
-## Deployment
+## Deployment Process
 
-### Local Development (Using Nitro Devnode)
+### Important Note on Constructor Arguments
 
-1. **Start a local Arbitrum node** (optional, if you have nitro-devnode):
-```bash
-# From parent directory
-cd ../nitro-devnode
-./run-dev-node.sh
-```
+⚠️ **Known Issue**: The `cargo stylus deploy` command currently has a limitation with constructor arguments ([GitHub Issue #99](https://github.com/OffchainLabs/stylus-sdk-rs/issues/99)). Constructor arguments passed via `--constructor-args` are not properly recognized during deployment.
 
-2. **Deploy the contract**:
-```bash
-# Source environment variables
-source .env
+**Workaround**: Use an initialization pattern instead of a constructor. Deploy the contract first, then call an `initialize` function to set up the mint price.
 
-# Deploy with constructor arguments (mint price in wei)
-# Example: 1000000000000000 wei = 0.001 ETH
-cargo stylus deploy -e $RPC --no-verify --private-key $PRIVATE_KEY --constructor-args 1000000000000000
-```
-
-### Testnet Deployment
+### Step 1: Build and Deploy
 
 ```bash
-# Deploy to Arbitrum Sepolia testnet
+# Export ABI
+cargo stylus export-abi
+
+# Build for release
+cargo build --release --target wasm32-unknown-unknown
+
+# Deploy to Arbitrum Sepolia (without constructor args)
 cargo stylus deploy \
-  --private-key-path=<path-to-key-file> \
-  --constructor-args 1000000000000000 \
-  --estimate-gas
+  --private-key $PRIVATE_KEY \
+  --endpoint https://sepolia-rollup.arbitrum.io/rpc
 ```
 
-The deployment will provide you with the contract address, which you should save in your `.env` file as `CONTRACT=0x...`
+### Step 2: Initialize the Contract
+
+After deployment, initialize the contract using the integration scripts:
+
+```bash
+# Navigate to integration folder
+cd integration
+
+# Install dependencies (using Bun)
+bun install
+
+# Update the contract address in squiggle.ts
+# Replace SQUIGGLE_CONTRACT_ADDRESS with your deployed address
+
+# Run initialization script
+PRIVATE_KEY=$PRIVATE_KEY bun run initialize.ts
+```
+
+### Integration Setup
+
+The `integration/` folder contains TypeScript scripts using Bun and Viem for interacting with the deployed contract:
+
+```
+integration/
+├── package.json       # Bun package configuration  
+├── tsconfig.json      # TypeScript configuration
+├── chain.ts          # Chain and wallet configuration
+├── abis.ts           # Contract ABI definitions
+├── squiggle.ts       # Squiggle interaction helpers
+├── initialize.ts     # Contract initialization script
+├── mint.ts           # NFT minting script
+└── index.test.ts     # Test examples
+```
+
+#### Key Integration Features:
+
+1. **Bun Runtime**: Fast JavaScript runtime for quick script execution
+2. **Viem Library**: Type-safe Ethereum interactions  
+3. **Helper Functions**: Pre-built functions for common operations (initialize, mint, transfer)
+
 
 ## Interacting with the Contract
 
-### Minting an NFT
+### Using Integration Scripts
 
-Using cast (Foundry):
+After initialization, you can interact with the contract using the TypeScript helpers:
+
 ```bash
+# Mint an NFT (sends 0.001 ETH)
+PRIVATE_KEY=$PRIVATE_KEY bun run mint.ts
+
+# Run tests (update contract address first)
+bun test
+```
+
+### Using Foundry Cast (Alternative)
+
+If you prefer using cast commands:
+
+```bash
+# Initialize contract (one-time setup)
+cast send $CONTRACT \
+  --private-key $PRIVATE_KEY \
+  --rpc-url $RPC \
+  "initialize(uint256)" 1000000000000000
+
 # Mint by sending ETH (value should match or exceed mint_price)
 cast send $CONTRACT \
   --private-key $PRIVATE_KEY \
@@ -284,23 +344,82 @@ The contract uses several optimization techniques in `Cargo.toml`:
 
 ### Common Issues
 
-1. **Build fails with "no_std" errors**:
-   - Ensure you're targeting `wasm32-unknown-unknown`: `cargo build --target wasm32-unknown-unknown`
-   - Check that `rust-toolchain.toml` specifies the correct Rust version
+#### 1. Constructor Arguments Not Working
 
-2. **Deployment fails**:
-   - Verify your RPC endpoint is accessible and correct
-   - Ensure your account has sufficient ETH for gas fees
-   - Run `cargo stylus check` to validate the contract before deployment
+**Problem**: Getting error "mismatch number of constructor arguments (want 1; got 0)"
 
-3. **Minting fails**:
-   - Ensure the value sent matches or exceeds the mint_price
-   - Check that your account has sufficient ETH balance
-   - Verify the contract address is correct in your `.env` file
+**Cause**: Known limitation in cargo-stylus tool ([Issue #99](https://github.com/OffchainLabs/stylus-sdk-rs/issues/99))
 
-4. **"Compressed WASM too large" error**:
-   - Adjust optimization settings in `Cargo.toml`
-   - Consider using `opt-level = "z"` for maximum size optimization
+**Solution**: Use the initialization pattern as described in this README:
+1. Deploy without constructor arguments
+2. Call `initialize()` function after deployment with the mint price
+
+#### 2. "Contract already initialized" Error
+
+**Problem**: Getting "InvalidSender" error when calling initialize
+
+**Cause**: Contract has already been initialized (can only be done once)
+
+**Solution**: Check contract info to confirm current state:
+
+```typescript
+import { getContractInfo } from "./integration/squiggle";
+const info = await getContractInfo();
+console.log("Current contract:", info);
+```
+
+#### 3. Private Key Format Issues
+
+**Problem**: "invalid private key" error in integration scripts
+
+**Solution**: Ensure private key is properly formatted with 0x prefix:
+
+```bash
+# Correct format
+PRIVATE_KEY=0x1234567890abcdef...
+
+# Run script
+PRIVATE_KEY=$PRIVATE_KEY bun run initialize.ts
+```
+
+#### 4. "InsufficientPayment" Error
+
+**Problem**: Minting fails with insufficient payment error
+
+**Cause**: The ETH sent is less than the configured mint_price
+
+**Solution**: Ensure you send at least the mint price (default 0.001 ETH):
+
+```bash
+# Check mint price first, then send correct amount
+PRIVATE_KEY=$PRIVATE_KEY bun run mint.ts
+```
+
+#### 5. Contract Address Not Set
+
+**Problem**: "Please update SQUIGGLE_CONTRACT_ADDRESS" error
+
+**Solution**: Update the contract address in `integration/squiggle.ts`:
+
+```typescript
+export const SQUIGGLE_CONTRACT_ADDRESS = "0xYourContractAddressHere";
+```
+
+#### 6. Build fails with "no_std" errors
+
+- Ensure you're targeting `wasm32-unknown-unknown`: `cargo build --target wasm32-unknown-unknown`
+- Check that `rust-toolchain.toml` specifies the correct Rust version
+
+#### 7. Deployment fails
+
+- Verify your RPC endpoint is accessible and correct
+- Ensure your account has sufficient ETH for gas fees
+- Run `cargo stylus check` to validate the contract before deployment
+
+#### 8. "Compressed WASM too large" error
+
+- Adjust optimization settings in `Cargo.toml`
+- Consider using `opt-level = "z"` for maximum size optimization
 
 ## Advanced Usage
 

@@ -1,0 +1,20 @@
+{
+  "name": "squiggle-integration",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "bun test",
+    "initialize": "bun run initialize.ts",
+    "mint": "bun run mint.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "viem": "^2.33.3"
+  }
+}

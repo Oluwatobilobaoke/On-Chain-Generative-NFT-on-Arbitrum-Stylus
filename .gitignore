@@ -1,2 +1,11 @@
 /target
 .env
+
+
+# Test snapshots
+**/test_snapshots/
+test_snapshots/
+
+**/test_output/
+
+/.specstory
